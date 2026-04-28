@@ -1,81 +1,121 @@
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    CallbackQueryHandler,
+    MessageHandler,
+    filters
+)
 import requests
+import os
+from dotenv import load_dotenv
 
-TOKEN = "8646047390:AAEm4l1AfGedjPBIIlZrcJ_OIuGSPkrhv3A"
-API_KEY = "c4631be9e94547540f168ccfedca7c6c"
+load_dotenv()
+
+TOKEN = os.getenv("TOKEN")
+API_KEY = os.getenv("API_KEY")
 
 
-# /start
+# старт
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("🌤 Погода", callback_data="weather")],
+        [InlineKeyboardButton("📍 Геолокация", callback_data="geo")]
+    ]
+
     await update.message.reply_text(
-        "👋 Привет!\n"
-        "Я бот погоды 🌤\n\n"
-        "📌 Основные команды:\n"
-        "/weather город — узнать погоду\n"
-        "/cityhelp — список городов и помощь\n\n"
-        "💡 Пример:\n"
-        "/weather Almaty"
+        "Выбери действие:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
-# /cityhelp
-async def cityhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📍 Поддерживаемые города:\n"
-        "• Oskemen / Ust-Kamenogorsk\n"
-        "• Almaty\n"
-        "• Astana\n"
-        "• Shymkent\n\n"
-        "💡 Использование:\n"
-        "/weather Almaty\n"
-        "/weather Oskemen\n\n"
-        "⚠️ Если город не находится — попробуй английское название"
-    )
+# кнопки
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "weather":
+        await query.message.reply_text("Введи: /weather Oskemen")
+
+    elif query.data == "geo":
+        btn = KeyboardButton("Отправить геолокацию 📍", request_location=True)
+        keyboard = ReplyKeyboardMarkup([[btn]], resize_keyboard=True)
+
+        await query.message.reply_text(
+            "Нажми кнопку ниже 👇",
+            reply_markup=keyboard
+        )
 
 
-# /weather
+# погода по городу
 async def weather(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     if not context.args:
-        await update.message.reply_text("❗ Введи город: /weather Almaty")
+        await update.message.reply_text("Пример: /weather Oskemen")
         return
 
     city = " ".join(context.args)
 
     url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={API_KEY}&units=metric&lang=ru"
+    data = requests.get(url).json()
 
-    try:
-        response = requests.get(url)
-        data = response.json()
+    if data.get("cod") != 200:
+        await update.message.reply_text("Город не найден")
+        return
 
-        if data.get("cod") != 200:
-            await update.message.reply_text("❌ Город не найден. Попробуй /cityhelp")
-            return
+    temp = data["main"]["temp"]
+    feels = data["main"]["feels_like"]
+    desc = data["weather"][0]["description"]
+    wind = data["wind"]["speed"]
 
-        temp = data["main"]["temp"]
-        feels = data["main"]["feels_like"]
-        desc = data["weather"][0]["description"]
-        wind = data["wind"]["speed"]
+    await update.message.reply_text(
+        f"🌍 Город: {city}\n"
+        f"🌡 Температура: {temp}°C\n"
+        f"🤔 Ощущается как: {feels}°C\n"
+        f"☁️ Погода: {desc}\n"
+        f"💨 Ветер: {wind} м/с"
+    )
 
-        await update.message.reply_text(
-            f"🌍 Город: {city}\n"
-            f"🌡 Температура: {temp}°C\n"
-            f"🤔 Ощущается как: {feels}°C\n"
-            f"☁️ Погода: {desc}\n"
-            f"💨 Ветер: {wind} м/с"
-        )
 
-    except Exception:
-        await update.message.reply_text("⚠️ Ошибка сервера. Попробуй позже")
+# погода по геолокации
+async def geo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    location = update.message.location
+    lat = location.latitude
+    lon = location.longitude
+
+    url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY}&units=metric&lang=ru"
+    data = requests.get(url).json()
+
+    if "main" not in data:
+        await update.message.reply_text("Ошибка получения данных 😢")
+        return
+
+    temp = data["main"]["temp"]
+    feels = data["main"]["feels_like"]
+    desc = data["weather"][0]["description"]
+    wind = data["wind"]["speed"]
+
+    await update.message.reply_text(
+        f"📍 Погода по геолокации:\n"
+        f"🌡 Температура: {temp}°C\n"
+        f"🤔 Ощущается как: {feels}°C\n"
+        f"☁️ Погода: {desc}\n"
+        f"💨 Ветер: {wind} м/с"
+    )
 
 
 # запуск бота
-app = ApplicationBuilder().token(TOKEN).build()
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("weather", weather))
-app.add_handler(CommandHandler("cityhelp", cityhelp))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("weather", weather))
+    app.add_handler(CallbackQueryHandler(buttons))
+    app.add_handler(MessageHandler(filters.LOCATION, geo))
 
-print("🤖 Бот запущен...")
-app.run_polling()
+    print("Бот запущен")
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
